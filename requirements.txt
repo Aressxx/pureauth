@@ -4,3 +4,4 @@ python-dotenv>=1.0.0
 dnspython>=2.0.0
 PyJWT>=2.8.0
 Flask-Cors>=4.2.0
+gunicorn>=21.2.0
