@@ -1,2 +1,5 @@
 Flask==2.3.2
 pymongo[srv]==4.6.1
+requests==2.31.0
+gunicorn==21.2.0
+dnspython==3.8.1
