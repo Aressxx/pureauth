@@ -7,19 +7,21 @@ from functools import wraps
 from pymongo import MongoClient
 import os
 from dotenv import load_dotenv
+from flask_cors import CORS
 
 # Load environment variables
 load_dotenv()
 
 app = Flask(__name__)
+CORS(app)
 
 # Configuration
 ADMIN_SECRET_KEY = os.getenv('ADMIN_SECRET_KEY', 'solar')
-MONGO_URI = os.getenv('MONGO_URI', "mongodb+srv://pureauth:Ld5jRvoi5btcdrZl@pureauth.8ykljss.mongodb.net/?retryWrites=true&w=majority&appName=Pureauth")
+MONGO_URI = os.getenv('MONGO_URI', "mongodb+srv://pureauth:Ld5jRvoi5btcdrZl@pureauth.8ykljss.mongodb.net/pureauth?retryWrites=true&w=majority")
 
 # Connect to MongoDB
 try:
-    client = MongoClient(MONGO_URI)
+    client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
     db = client['pureauth']        # Database name
     users_collection = db['users'] # Collection name
     # Test connection
@@ -27,7 +29,10 @@ try:
     print("Successfully connected to MongoDB!")
 except Exception as e:
     print(f"Failed to connect to MongoDB: {e}")
-    # Continue anyway - connection will be tested on first request
+    # Set client to None so we can handle it gracefully
+    client = None
+    db = None
+    users_collection = None
 
 # ---------------- Admin & User Decorators ----------------
 def admin_required(f):
@@ -96,6 +101,9 @@ def home():
 @app.route('/register', methods=['POST'])
 def register():
     try:
+        if not users_collection:
+            return jsonify({'error': 'Database connection not available'}), 500
+            
         data = request.get_json()
         if not data:
             return jsonify({'error': 'JSON data required'}), 400
@@ -152,6 +160,9 @@ def register():
 @app.route('/login', methods=['POST'])
 def login():
     try:
+        if not users_collection:
+            return jsonify({'error': 'Database connection not available'}), 500
+            
         data = request.get_json()
         if not data:
             return jsonify({'error': 'JSON data required'}), 400
@@ -341,4 +352,3 @@ def internal_error(error):
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
-
