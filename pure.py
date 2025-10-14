@@ -8,6 +8,7 @@ from pymongo import MongoClient
 import os
 from dotenv import load_dotenv
 from flask_cors import CORS
+import re
 
 # Load environment variables
 load_dotenv()
@@ -24,12 +25,10 @@ try:
     client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
     db = client['pureauth']        # Database name
     users_collection = db['users'] # Collection name
-    # Test connection
     client.admin.command('ping')
     print("Successfully connected to MongoDB!")
 except Exception as e:
     print(f"Failed to connect to MongoDB: {e}")
-    # Set client to None so we can handle it gracefully
     client = None
     db = None
     users_collection = None
@@ -60,7 +59,6 @@ def token_required(f):
     return decorated_function
 
 # ---------------- Validation ----------------
-import re
 def validate_email(email):
     pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
     return re.match(pattern, email) is not None
@@ -101,13 +99,13 @@ def home():
 @app.route('/register', methods=['POST'])
 def register():
     try:
-        if not users_collection:
+        if users_collection is None:
             return jsonify({'error': 'Database connection not available'}), 500
-            
+
         data = request.get_json()
         if not data:
             return jsonify({'error': 'JSON data required'}), 400
-            
+
         username = data.get('username', '').strip()
         email = data.get('email', '').strip()
         password = data.get('password', '')
@@ -122,12 +120,10 @@ def register():
         if not validate_password(password):
             return jsonify({'error': 'Password must be at least 6 characters'}), 400
 
-        # Check if user already exists
         existing_user = users_collection.find_one({'$or': [{'username': username}, {'email': email}]})
         if existing_user:
             return jsonify({'error': 'Username or email already exists'}), 409
 
-        # Create new user
         user_id = str(uuid.uuid4())
         current_time = datetime.now().isoformat()
 
@@ -155,25 +151,24 @@ def register():
         }), 201
 
     except Exception as e:
-        return jsonify({'error': 'Internal server error'}), 500
+        return jsonify({'error': 'Internal server error', 'details': str(e)}), 500
 
 @app.route('/login', methods=['POST'])
 def login():
     try:
-        if not users_collection:
+        if users_collection is None:
             return jsonify({'error': 'Database connection not available'}), 500
-            
+
         data = request.get_json()
         if not data:
             return jsonify({'error': 'JSON data required'}), 400
-            
-        identifier = data.get('email', '').strip()  # Can be email or username
+
+        identifier = data.get('email', '').strip()
         password = data.get('password', '')
 
         if not identifier or not password:
             return jsonify({'error': 'Email/username and password are required'}), 400
 
-        # Find user by email or username
         user = users_collection.find_one({
             '$or': [
                 {'username': identifier},
@@ -187,14 +182,13 @@ def login():
         if not user.get('is_active', True):
             return jsonify({'error': 'Account is deactivated'}), 401
 
-        # Generate new token and update last login
         token = generate_token()
         current_time = datetime.now().isoformat()
-        
+
         users_collection.update_one(
-            {'_id': user['_id']}, 
+            {'_id': user['_id']},
             {'$set': {
-                'token': token, 
+                'token': token,
                 'last_login': current_time
             }}
         )
@@ -212,7 +206,7 @@ def login():
         }), 200
 
     except Exception as e:
-        return jsonify({'error': 'Internal server error'}), 500
+        return jsonify({'error': 'Internal server error', 'details': str(e)}), 500
 
 # ---------------- Admin Routes ----------------
 @app.route('/admin/users', methods=['GET'])
@@ -223,12 +217,12 @@ def list_users():
         for user in users:
             user['id'] = user.pop('_id')
         return jsonify({
-            'users': users, 
+            'users': users,
             'total': len(users),
             'message': 'Users retrieved successfully'
         }), 200
     except Exception as e:
-        return jsonify({'error': 'Internal server error'}), 500
+        return jsonify({'error': 'Internal server error', 'details': str(e)}), 500
 
 @app.route('/admin/users/<user_id>', methods=['GET'])
 @admin_required
@@ -243,7 +237,7 @@ def get_user(user_id):
             'message': 'User retrieved successfully'
         }), 200
     except Exception as e:
-        return jsonify({'error': 'Internal server error'}), 500
+        return jsonify({'error': 'Internal server error', 'details': str(e)}), 500
 
 @app.route('/admin/users', methods=['POST'])
 @admin_required
@@ -252,12 +246,11 @@ def add_user():
         data = request.get_json()
         if not data:
             return jsonify({'error': 'JSON data required'}), 400
-            
+
         username = data.get('username', '').strip()
         email = data.get('email', '').strip()
         password = data.get('password', '')
 
-        # Validation
         if not username or not email or not password:
             return jsonify({'error': 'Username, email, and password are required'}), 400
         if not validate_username(username):
@@ -267,15 +260,13 @@ def add_user():
         if not validate_password(password):
             return jsonify({'error': 'Password must be at least 6 characters'}), 400
 
-        # Check if user already exists
         existing_user = users_collection.find_one({'$or': [{'username': username}, {'email': email}]})
         if existing_user:
             return jsonify({'error': 'Username or email already exists'}), 409
 
-        # Create new user
         user_id = str(uuid.uuid4())
         current_time = datetime.now().isoformat()
-        
+
         new_user = {
             '_id': user_id,
             'username': username,
@@ -286,9 +277,9 @@ def add_user():
             'token': None,
             'is_active': True
         }
-        
+
         users_collection.insert_one(new_user)
-        
+
         return jsonify({
             'message': 'User created successfully',
             'user': {
@@ -300,7 +291,7 @@ def add_user():
         }), 201
 
     except Exception as e:
-        return jsonify({'error': 'Internal server error'}), 500
+        return jsonify({'error': 'Internal server error', 'details': str(e)}), 500
 
 @app.route('/admin/users/<user_id>', methods=['DELETE'])
 @admin_required
@@ -314,13 +305,12 @@ def delete_user(user_id):
             'deleted_user_id': user_id
         }), 200
     except Exception as e:
-        return jsonify({'error': 'Internal server error'}), 500
+        return jsonify({'error': 'Internal server error', 'details': str(e)}), 500
 
 # ---------------- Health Check ----------------
 @app.route('/health')
 def health_check():
     try:
-        # Test MongoDB connection
         client.admin.command('ping')
         return jsonify({
             'status': 'healthy',
