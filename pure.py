@@ -6,6 +6,10 @@ import uuid
 from functools import wraps
 from pymongo import MongoClient
 import os
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 app = Flask(__name__)
 
@@ -14,9 +18,16 @@ ADMIN_SECRET_KEY = os.getenv('ADMIN_SECRET_KEY', 'solar')
 MONGO_URI = os.getenv('MONGO_URI', "mongodb+srv://pure:tGqD6ciQ9E2nDacc@pureauth.8ykljss.mongodb.net/?retryWrites=true&w=majority&appName=Pureauth")
 
 # Connect to MongoDB
-client = MongoClient(MONGO_URI)
-db = client['pureauth']        # Database name
-users_collection = db['users'] # Collection name
+try:
+    client = MongoClient(MONGO_URI)
+    db = client['pureauth']        # Database name
+    users_collection = db['users'] # Collection name
+    # Test connection
+    client.admin.command('ping')
+    print("Successfully connected to MongoDB!")
+except Exception as e:
+    print(f"Failed to connect to MongoDB: {e}")
+    # Continue anyway - connection will be tested on first request
 
 # ---------------- Admin & User Decorators ----------------
 def admin_required(f):
@@ -67,6 +78,7 @@ def home():
     return jsonify({
         'message': 'PureAuth API',
         'version': '1.0.0',
+        'status': 'active',
         'endpoints': {
             'login': '/login',
             'register': '/register',
@@ -76,129 +88,241 @@ def home():
                 'add_user': '/admin/users',
                 'delete_user': '/admin/users/<user_id>'
             }
-        }
+        },
+        'admin_key_required': 'X-Admin-Key header for admin endpoints'
     })
 
 # ---------------- User Routes ----------------
 @app.route('/register', methods=['POST'])
 def register():
-    data = request.get_json()
-    username = data.get('username', '').strip()
-    email = data.get('email', '').strip()
-    password = data.get('password', '')
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'JSON data required'}), 400
+            
+        username = data.get('username', '').strip()
+        email = data.get('email', '').strip()
+        password = data.get('password', '')
 
-    if not username or not email or not password:
-        return jsonify({'error': 'Username, email, and password are required'}), 400
-    if not validate_username(username):
-        return jsonify({'error': 'Username must be at least 3 chars and alphanumeric'}), 400
-    if not validate_email(email):
-        return jsonify({'error': 'Invalid email format'}), 400
-    if not validate_password(password):
-        return jsonify({'error': 'Password must be at least 6 characters'}), 400
-    if users_collection.find_one({'$or':[{'username': username},{'email': email}]}):
-        return jsonify({'error': 'Username or email already exists'}), 409
+        # Validation
+        if not username or not email or not password:
+            return jsonify({'error': 'Username, email, and password are required'}), 400
+        if not validate_username(username):
+            return jsonify({'error': 'Username must be at least 3 characters and alphanumeric'}), 400
+        if not validate_email(email):
+            return jsonify({'error': 'Invalid email format'}), 400
+        if not validate_password(password):
+            return jsonify({'error': 'Password must be at least 6 characters'}), 400
 
-    user_id = str(uuid.uuid4())
-    current_time = datetime.now().isoformat()
+        # Check if user already exists
+        existing_user = users_collection.find_one({'$or': [{'username': username}, {'email': email}]})
+        if existing_user:
+            return jsonify({'error': 'Username or email already exists'}), 409
 
-    new_user = {
-        '_id': user_id,
-        'username': username,
-        'email': email,
-        'password': hash_password(password),
-        'created_at': current_time,
-        'last_login': None,
-        'token': None
-    }
+        # Create new user
+        user_id = str(uuid.uuid4())
+        current_time = datetime.now().isoformat()
 
-    users_collection.insert_one(new_user)
+        new_user = {
+            '_id': user_id,
+            'username': username,
+            'email': email,
+            'password': hash_password(password),
+            'created_at': current_time,
+            'last_login': None,
+            'token': None,
+            'is_active': True
+        }
 
-    return jsonify({'message': 'Registration successful', 'user': {
-        'id': user_id, 'username': username, 'email': email, 'created_at': current_time
-    }}), 201
+        users_collection.insert_one(new_user)
+
+        return jsonify({
+            'message': 'Registration successful',
+            'user': {
+                'id': user_id,
+                'username': username,
+                'email': email,
+                'created_at': current_time
+            }
+        }), 201
+
+    except Exception as e:
+        return jsonify({'error': 'Internal server error'}), 500
 
 @app.route('/login', methods=['POST'])
 def login():
-    data = request.get_json()
-    identifier = data.get('email', '').strip()
-    password = data.get('password', '')
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'JSON data required'}), 400
+            
+        identifier = data.get('email', '').strip()  # Can be email or username
+        password = data.get('password', '')
 
-    if not identifier or not password:
-        return jsonify({'error': 'Email/username and password are required'}), 400
+        if not identifier or not password:
+            return jsonify({'error': 'Email/username and password are required'}), 400
 
-    user = users_collection.find_one({'$or':[{'username': identifier},{'email': identifier}]})
-    if not user or user['password'] != hash_password(password):
-        return jsonify({'error': 'Invalid credentials'}), 401
+        # Find user by email or username
+        user = users_collection.find_one({
+            '$or': [
+                {'username': identifier},
+                {'email': identifier}
+            ]
+        })
 
-    token = generate_token()
-    users_collection.update_one({'_id': user['_id']}, {'$set': {'token': token, 'last_login': datetime.now().isoformat()}})
+        if not user or user['password'] != hash_password(password):
+            return jsonify({'error': 'Invalid credentials'}), 401
 
-    return jsonify({'message': 'Login successful','token': token,'user': {
-        'id': user['_id'],
-        'username': user['username'],
-        'email': user['email'],
-        'created_at': user['created_at'],
-        'last_login': datetime.now().isoformat()
-    }}), 200
+        if not user.get('is_active', True):
+            return jsonify({'error': 'Account is deactivated'}), 401
+
+        # Generate new token and update last login
+        token = generate_token()
+        current_time = datetime.now().isoformat()
+        
+        users_collection.update_one(
+            {'_id': user['_id']}, 
+            {'$set': {
+                'token': token, 
+                'last_login': current_time
+            }}
+        )
+
+        return jsonify({
+            'message': 'Login successful',
+            'token': token,
+            'user': {
+                'id': user['_id'],
+                'username': user['username'],
+                'email': user['email'],
+                'created_at': user['created_at'],
+                'last_login': current_time
+            }
+        }), 200
+
+    except Exception as e:
+        return jsonify({'error': 'Internal server error'}), 500
 
 # ---------------- Admin Routes ----------------
 @app.route('/admin/users', methods=['GET'])
 @admin_required
 def list_users():
-    users = list(users_collection.find({}, {'password': 0, 'token': 0}))
-    for u in users:
-        u['id'] = u.pop('_id')
-    return jsonify({'users': users, 'total': len(users)}), 200
+    try:
+        users = list(users_collection.find({}, {'password': 0, 'token': 0}))
+        for user in users:
+            user['id'] = user.pop('_id')
+        return jsonify({
+            'users': users, 
+            'total': len(users),
+            'message': 'Users retrieved successfully'
+        }), 200
+    except Exception as e:
+        return jsonify({'error': 'Internal server error'}), 500
 
 @app.route('/admin/users/<user_id>', methods=['GET'])
 @admin_required
 def get_user(user_id):
-    user = users_collection.find_one({'_id': user_id}, {'password':0,'token':0})
-    if not user:
-        return jsonify({'error': 'User not found'}), 404
-    user['id'] = user.pop('_id')
-    return jsonify({'user': user}), 200
+    try:
+        user = users_collection.find_one({'_id': user_id}, {'password': 0, 'token': 0})
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        user['id'] = user.pop('_id')
+        return jsonify({
+            'user': user,
+            'message': 'User retrieved successfully'
+        }), 200
+    except Exception as e:
+        return jsonify({'error': 'Internal server error'}), 500
 
 @app.route('/admin/users', methods=['POST'])
 @admin_required
 def add_user():
-    data = request.get_json()
-    username = data.get('username', '').strip()
-    email = data.get('email', '').strip()
-    password = data.get('password', '')
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'JSON data required'}), 400
+            
+        username = data.get('username', '').strip()
+        email = data.get('email', '').strip()
+        password = data.get('password', '')
 
-    if not username or not email or not password:
-        return jsonify({'error': 'Username, email, and password required'}), 400
-    if not validate_username(username):
-        return jsonify({'error': 'Username must be at least 3 chars and alphanumeric'}), 400
-    if not validate_email(email):
-        return jsonify({'error': 'Invalid email format'}), 400
-    if not validate_password(password):
-        return jsonify({'error': 'Password must be at least 6 characters'}), 400
-    if users_collection.find_one({'$or':[{'username': username},{'email': email}]}):
-        return jsonify({'error': 'Username or email already exists'}), 409
+        # Validation
+        if not username or not email or not password:
+            return jsonify({'error': 'Username, email, and password are required'}), 400
+        if not validate_username(username):
+            return jsonify({'error': 'Username must be at least 3 characters and alphanumeric'}), 400
+        if not validate_email(email):
+            return jsonify({'error': 'Invalid email format'}), 400
+        if not validate_password(password):
+            return jsonify({'error': 'Password must be at least 6 characters'}), 400
 
-    user_id = str(uuid.uuid4())
-    current_time = datetime.now().isoformat()
-    new_user = {
-        '_id': user_id,
-        'username': username,
-        'email': email,
-        'password': hash_password(password),
-        'created_at': current_time,
-        'last_login': None,
-        'token': None
-    }
-    users_collection.insert_one(new_user)
-    return jsonify({'message': 'User created successfully','user': {'id': user_id, 'username': username,'email': email,'created_at': current_time}}), 201
+        # Check if user already exists
+        existing_user = users_collection.find_one({'$or': [{'username': username}, {'email': email}]})
+        if existing_user:
+            return jsonify({'error': 'Username or email already exists'}), 409
+
+        # Create new user
+        user_id = str(uuid.uuid4())
+        current_time = datetime.now().isoformat()
+        
+        new_user = {
+            '_id': user_id,
+            'username': username,
+            'email': email,
+            'password': hash_password(password),
+            'created_at': current_time,
+            'last_login': None,
+            'token': None,
+            'is_active': True
+        }
+        
+        users_collection.insert_one(new_user)
+        
+        return jsonify({
+            'message': 'User created successfully',
+            'user': {
+                'id': user_id,
+                'username': username,
+                'email': email,
+                'created_at': current_time
+            }
+        }), 201
+
+    except Exception as e:
+        return jsonify({'error': 'Internal server error'}), 500
 
 @app.route('/admin/users/<user_id>', methods=['DELETE'])
 @admin_required
 def delete_user(user_id):
-    result = users_collection.delete_one({'_id': user_id})
-    if result.deleted_count == 0:
-        return jsonify({'error': 'User not found'}), 404
-    return jsonify({'message': 'User deleted successfully', 'deleted_user_id': user_id}), 200
+    try:
+        result = users_collection.delete_one({'_id': user_id})
+        if result.deleted_count == 0:
+            return jsonify({'error': 'User not found'}), 404
+        return jsonify({
+            'message': 'User deleted successfully',
+            'deleted_user_id': user_id
+        }), 200
+    except Exception as e:
+        return jsonify({'error': 'Internal server error'}), 500
+
+# ---------------- Health Check ----------------
+@app.route('/health')
+def health_check():
+    try:
+        # Test MongoDB connection
+        client.admin.command('ping')
+        return jsonify({
+            'status': 'healthy',
+            'database': 'connected',
+            'timestamp': datetime.now().isoformat()
+        }), 200
+    except Exception as e:
+        return jsonify({
+            'status': 'unhealthy',
+            'database': 'disconnected',
+            'error': str(e),
+            'timestamp': datetime.now().isoformat()
+        }), 500
 
 # ---------------- Error handlers ----------------
 @app.errorhandler(404)
