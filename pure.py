@@ -15,7 +15,7 @@ app = Flask(__name__)
 
 # Configuration
 ADMIN_SECRET_KEY = os.getenv('ADMIN_SECRET_KEY', 'solar')
-MONGO_URI = os.getenv('MONGO_URI', "mongodb+srv://pure:tGqD6ciQ9E2nDacc@pureauth.8ykljss.mongodb.net/?retryWrites=true&w=majority&appName=Pureauth")
+MONGO_URI = os.getenv('MONGO_URI', "mongodb+srv://pure:tGqD6ciQ9E2nDacc@pureauth.8ykljss.mongodb.net/pureauth?retryWrites=true&w=majority")
 
 # Connect to MongoDB
 try:
