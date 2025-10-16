@@ -21,8 +21,8 @@ CORS(app)
 ADMIN_SECRET_KEY = os.getenv('ADMIN_SECRET_KEY', 'solar')
 MONGO_URI = os.getenv('MONGO_URI', "mongodb+srv://pureauth:Ld5jRvoi5btcdrZl@pureauth.8ykljss.mongodb.net/pureauth?retryWrites=true&w=majority")
 CMC_API_KEY = os.getenv('CMC_API_KEY', '1c9d7ce683bb46cebe8707898d0f5a0b')
-ETHERSCAN_API_KEY = os.getenv('9MSIEZMPHGWB35KKFFW5Y8MWJSS38EN2CN', '')
-SOLSCAN_API_KEY = os.getenv('eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjcmVhdGVkQXQiOjE3NjA2MTU3MTg2MzIsImVtYWlsIjoiZmVtaXcxMzA0M0BlbHlnaWZ0cy5jb20iLCJhY3Rpb24iOiJ0b2tlbi1hcGkiLCJhcGlWZXJzaW9uIjoidjIiLCJpYXQiOjE3NjA2MTU3MTh9.GWZnfAqGlPoClFHTqdeNPYUqpA2cXJOZl08ofUzcoew', '')
+ETHERSCAN_API_KEY = os.getenv('ETHERSCAN_API_KEY', '9MSIEZMPHGWB35KKFFW5Y8MWJSS38EN2CN')
+SOLSCAN_API_KEY = os.getenv('SOLSCAN_API_KEY', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjcmVhdGVkQXQiOjE3NjA2MTU3MTg2MzIsImVtYWlsIjoiZmVtaXcxMzA0M0BlbHlnaWZ0cy5jb20iLCJhY3Rpb24iOiJ0b2tlbi1hcGkiLCJhcGlWZXJzaW9uIjoidjIiLCJpYXQiOjE3NjA2MTU3MTh9.GWZnfAqGlPoClFHTqdeNPYUqpA2cXJOZl08ofUzcoew')
 
 # Connect to MongoDB
 try:
