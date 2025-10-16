@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify
-from datetime import datetime, timedelta
+from datetime import datetime
 import hashlib
 import secrets
 import uuid
@@ -8,7 +8,6 @@ from pymongo import MongoClient
 import os
 from dotenv import load_dotenv
 from flask_cors import CORS
-import requests
 import re
 
 # Load environment variables
@@ -20,9 +19,7 @@ CORS(app)
 # Configuration
 ADMIN_SECRET_KEY = os.getenv('ADMIN_SECRET_KEY', 'solar')
 MONGO_URI = os.getenv('MONGO_URI', "mongodb+srv://pureauth:Ld5jRvoi5btcdrZl@pureauth.8ykljss.mongodb.net/pureauth?retryWrites=true&w=majority")
-CMC_API_KEY = os.getenv('CMC_API_KEY', '1c9d7ce683bb46cebe8707898d0f5a0b')
-ETHERSCAN_API_KEY = os.getenv('ETHERSCAN_API_KEY', '9MSIEZMPHGWB35KKFFW5Y8MWJSS38EN2CN')
-SOLSCAN_API_KEY = os.getenv('SOLSCAN_API_KEY', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjcmVhdGVkQXQiOjE3NjA2MTU3MTg2MzIsImVtYWlsIjoiZmVtaXcxMzA0M0BlbHlnaWZ0cy5jb20iLCJhY3Rpb24iOiJ0b2tlbi1hcGkiLCJhcGlWZXJzaW9uIjoidjIiLCJpYXQiOjE3NjA2MTU3MTh9.GWZnfAqGlPoClFHTqdeNPYUqpA2cXJOZl08ofUzcoew')
+## Crypto configs removed
 
 # Connect to MongoDB
 try:
@@ -342,133 +339,7 @@ def method_not_allowed(error):
 def internal_error(error):
     return jsonify({'error': 'Internal server error'}), 500
 
-# ---------------- Crypto Endpoints ----------------
-@app.route('/crypto/listings', methods=['GET'])
-@token_required
-def crypto_listings():
-    try:
-        limit = int(request.args.get('limit', '50'))
-        limit = max(1, min(limit, 100))
-        if not CMC_API_KEY:
-            return jsonify({'error': 'CMC API key not configured'}), 500
-        headers = {
-            'Accepts': 'application/json',
-            'X-CMC_PRO_API_KEY': CMC_API_KEY
-        }
-        params = {
-            'start': '1',
-            'limit': str(limit),
-            'convert': 'USD'
-        }
-        resp = requests.get('https://pro-api.coinmarketcap.com/v1/cryptocurrency/listings/latest', headers=headers, params=params, timeout=15)
-        data = resp.json()
-        return jsonify(data), resp.status_code
-    except Exception as e:
-        return jsonify({'error': 'Failed to fetch listings', 'details': str(e)}), 500
-
-
-@app.route('/crypto/balance/btc/<address>', methods=['GET'])
-@token_required
-def btc_balance(address):
-    try:
-        # Use blockchain.info free endpoint
-        resp = requests.get(f'https://blockchain.info/balance?active={address}', timeout=15)
-        if resp.status_code != 200:
-            return jsonify({'error': 'Failed to fetch BTC balance'}), resp.status_code
-        j = resp.json() or {}
-        entry = j.get(address) or {}
-        balance_satoshi = entry.get('final_balance', 0)
-        return jsonify({
-            'address': address,
-            'balance': float(balance_satoshi) / 1e8,
-            'unit': 'BTC',
-            'raw': j
-        })
-    except Exception as e:
-        return jsonify({'error': 'Failed to fetch BTC balance', 'details': str(e)}), 500
-
-
-@app.route('/crypto/balance/eth/<address>', methods=['GET'])
-@token_required
-def eth_balance(address):
-    try:
-        if not ETHERSCAN_API_KEY:
-            return jsonify({'error': 'ETHERSCAN_API_KEY not configured'}), 500
-        params = {
-            'module': 'account',
-            'action': 'balance',
-            'address': address,
-            'tag': 'latest',
-            'apikey': ETHERSCAN_API_KEY
-        }
-        resp = requests.get('https://api.etherscan.io/api', params=params, timeout=15)
-        j = resp.json()
-        if j.get('status') == '0':
-            return jsonify({'error': j.get('message', 'Failed to fetch ETH balance'), 'details': j.get('result')}), 400
-        wei = int(j.get('result', '0'))
-        return jsonify({
-            'address': address,
-            'balance': wei / 1e18,
-            'unit': 'ETH',
-            'raw': j
-        })
-    except Exception as e:
-        return jsonify({'error': 'Failed to fetch ETH balance', 'details': str(e)}), 500
-
-
-@app.route('/crypto/balance/sol/<address>', methods=['GET'])
-@token_required
-def sol_balance(address):
-    try:
-        # Solscan public API v2
-        headers = {}
-        if SOLSCAN_API_KEY:
-            headers['token'] = SOLSCAN_API_KEY
-        resp = requests.get(f'https://public-api.solscan.io/account/{address}', headers=headers, timeout=15)
-        if resp.status_code != 200:
-            return jsonify({'error': 'Failed to fetch SOL balance'}), resp.status_code
-        j = resp.json()
-        lamports = j.get('lamports', 0)
-        return jsonify({
-            'address': address,
-            'balance': float(lamports) / 1e9,
-            'unit': 'SOL',
-            'raw': j
-        })
-    except Exception as e:
-        return jsonify({'error': 'Failed to fetch SOL balance', 'details': str(e)}), 500
-
-# Historical OHLCV (CMC proxy)
-@app.route('/crypto/history/<int:cmc_id>', methods=['GET'])
-@token_required
-def crypto_history(cmc_id: int):
-    try:
-        if not CMC_API_KEY:
-            return jsonify({'error': 'CMC API key not configured'}), 500
-        days = int(request.args.get('days', '30'))
-        interval = request.args.get('interval', 'daily')
-        if days < 1:
-            days = 1
-        if days > 365:
-            days = 365
-        time_end = datetime.utcnow()
-        time_start = time_end - timedelta(days=days)
-        headers = {
-            'Accepts': 'application/json',
-            'X-CMC_PRO_API_KEY': CMC_API_KEY
-        }
-        params = {
-            'id': str(cmc_id),
-            'convert': 'USD',
-            'time_start': time_start.strftime('%Y-%m-%dT%H:%M:%SZ'),
-            'time_end': time_end.strftime('%Y-%m-%dT%H:%M:%SZ'),
-            'interval': interval
-        }
-        resp = requests.get('https://pro-api.coinmarketcap.com/v2/cryptocurrency/ohlcv/historical', headers=headers, params=params, timeout=20)
-        data = resp.json()
-        return jsonify(data), resp.status_code
-    except Exception as e:
-        return jsonify({'error': 'Failed to fetch history', 'details': str(e)}), 500
+# (Crypto endpoints removed by request)
 
 # ---------------- Run ----------------
 if __name__ == '__main__':
