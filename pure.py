@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify
-from datetime import datetime
+from datetime import datetime, timedelta
 import hashlib
 import secrets
 import uuid
@@ -437,6 +437,38 @@ def sol_balance(address):
         })
     except Exception as e:
         return jsonify({'error': 'Failed to fetch SOL balance', 'details': str(e)}), 500
+
+# Historical OHLCV (CMC proxy)
+@app.route('/crypto/history/<int:cmc_id>', methods=['GET'])
+@token_required
+def crypto_history(cmc_id: int):
+    try:
+        if not CMC_API_KEY:
+            return jsonify({'error': 'CMC API key not configured'}), 500
+        days = int(request.args.get('days', '30'))
+        interval = request.args.get('interval', 'daily')
+        if days < 1:
+            days = 1
+        if days > 365:
+            days = 365
+        time_end = datetime.utcnow()
+        time_start = time_end - timedelta(days=days)
+        headers = {
+            'Accepts': 'application/json',
+            'X-CMC_PRO_API_KEY': CMC_API_KEY
+        }
+        params = {
+            'id': str(cmc_id),
+            'convert': 'USD',
+            'time_start': time_start.strftime('%Y-%m-%dT%H:%M:%SZ'),
+            'time_end': time_end.strftime('%Y-%m-%dT%H:%M:%SZ'),
+            'interval': interval
+        }
+        resp = requests.get('https://pro-api.coinmarketcap.com/v2/cryptocurrency/ohlcv/historical', headers=headers, params=params, timeout=20)
+        data = resp.json()
+        return jsonify(data), resp.status_code
+    except Exception as e:
+        return jsonify({'error': 'Failed to fetch history', 'details': str(e)}), 500
 
 # ---------------- Run ----------------
 if __name__ == '__main__':
