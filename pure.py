@@ -8,6 +8,7 @@ from pymongo import MongoClient
 import os
 from dotenv import load_dotenv
 from flask_cors import CORS
+import requests
 import re
 
 # Load environment variables
@@ -19,6 +20,10 @@ CORS(app)
 # Configuration
 ADMIN_SECRET_KEY = os.getenv('ADMIN_SECRET_KEY', 'solar')
 MONGO_URI = os.getenv('MONGO_URI', "mongodb+srv://pureauth:Ld5jRvoi5btcdrZl@pureauth.8ykljss.mongodb.net/pureauth?retryWrites=true&w=majority")
+CMC_API_KEY = os.getenv('CMC_API_KEY', '1c9d7ce683bb46cebe8707898d0f5a0b')
+BLOCKCHAIR_API_KEY = os.getenv('BLOCKCHAIR_API_KEY', '')
+ETHERSCAN_API_KEY = os.getenv('ETHERSCAN_API_KEY', '')
+SOLSCAN_API_KEY = os.getenv('SOLSCAN_API_KEY', '')
 
 # Connect to MongoDB
 try:
@@ -337,6 +342,105 @@ def method_not_allowed(error):
 @app.errorhandler(500)
 def internal_error(error):
     return jsonify({'error': 'Internal server error'}), 500
+
+# ---------------- Crypto Endpoints ----------------
+@app.route('/crypto/listings', methods=['GET'])
+@token_required
+def crypto_listings():
+    try:
+        limit = int(request.args.get('limit', '50'))
+        limit = max(1, min(limit, 100))
+        if not CMC_API_KEY:
+            return jsonify({'error': 'CMC API key not configured'}), 500
+        headers = {
+            'Accepts': 'application/json',
+            'X-CMC_PRO_API_KEY': CMC_API_KEY
+        }
+        params = {
+            'start': '1',
+            'limit': str(limit),
+            'convert': 'USD'
+        }
+        resp = requests.get('https://pro-api.coinmarketcap.com/v1/cryptocurrency/listings/latest', headers=headers, params=params, timeout=15)
+        data = resp.json()
+        return jsonify(data), resp.status_code
+    except Exception as e:
+        return jsonify({'error': 'Failed to fetch listings', 'details': str(e)}), 500
+
+
+@app.route('/crypto/balance/btc/<address>', methods=['GET'])
+@token_required
+def btc_balance(address):
+    try:
+        # Using Blockchair API (no key required for light use; key optional)
+        params = {}
+        if BLOCKCHAIR_API_KEY:
+            params['key'] = BLOCKCHAIR_API_KEY
+        resp = requests.get(f'https://api.blockchair.com/bitcoin/dashboards/address/{address}', params=params, timeout=15)
+        if resp.status_code != 200:
+            return jsonify({'error': 'Failed to fetch BTC balance'}), resp.status_code
+        j = resp.json()
+        data = j.get('data', {}).get(address, {})
+        balance_satoshi = data.get('address', {}).get('balance', 0)
+        return jsonify({
+            'address': address,
+            'balance': float(balance_satoshi) / 1e8,
+            'unit': 'BTC',
+            'raw': j
+        })
+    except Exception as e:
+        return jsonify({'error': 'Failed to fetch BTC balance', 'details': str(e)}), 500
+
+
+@app.route('/crypto/balance/eth/<address>', methods=['GET'])
+@token_required
+def eth_balance(address):
+    try:
+        if not ETHERSCAN_API_KEY:
+            return jsonify({'error': 'ETHERSCAN_API_KEY not configured'}), 500
+        params = {
+            'module': 'account',
+            'action': 'balance',
+            'address': address,
+            'tag': 'latest',
+            'apikey': ETHERSCAN_API_KEY
+        }
+        resp = requests.get('https://api.etherscan.io/api', params=params, timeout=15)
+        j = resp.json()
+        if j.get('status') == '0':
+            return jsonify({'error': j.get('message', 'Failed to fetch ETH balance'), 'details': j.get('result')}), 400
+        wei = int(j.get('result', '0'))
+        return jsonify({
+            'address': address,
+            'balance': wei / 1e18,
+            'unit': 'ETH',
+            'raw': j
+        })
+    except Exception as e:
+        return jsonify({'error': 'Failed to fetch ETH balance', 'details': str(e)}), 500
+
+
+@app.route('/crypto/balance/sol/<address>', methods=['GET'])
+@token_required
+def sol_balance(address):
+    try:
+        # Solscan public API v2
+        headers = {}
+        if SOLSCAN_API_KEY:
+            headers['token'] = SOLSCAN_API_KEY
+        resp = requests.get(f'https://public-api.solscan.io/account/{address}', headers=headers, timeout=15)
+        if resp.status_code != 200:
+            return jsonify({'error': 'Failed to fetch SOL balance'}), resp.status_code
+        j = resp.json()
+        lamports = j.get('lamports', 0)
+        return jsonify({
+            'address': address,
+            'balance': float(lamports) / 1e9,
+            'unit': 'SOL',
+            'raw': j
+        })
+    except Exception as e:
+        return jsonify({'error': 'Failed to fetch SOL balance', 'details': str(e)}), 500
 
 # ---------------- Run ----------------
 if __name__ == '__main__':
